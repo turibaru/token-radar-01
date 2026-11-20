@@ -77,6 +77,14 @@ function copyFiles(from: string, to: string): string[] {
 }
 
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+// The dashboard is the entry's face: refuse a build that ships without its page, script or style.
+const dashboardFiles = ['index.html', 'app.js', 'app.css'];
+for (const name of dashboardFiles) {
+  if (!existsSync(join(out, 'dashboard', name))) {
+    process.stderr.write(`token radar: dashboard/${name} is missing from the entry: the dashboard cannot render\n`);
+    process.exit(1);
+  }
+}
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
