@@ -326,10 +326,17 @@
 
   function modelPanel() {
     var m = DATA.model;
+    var globalRows = DATA.rows.filter(function (r) { return r.comp_category === 'all categories'; }).length;
     var compCards = DATA.comps.map(function (c) {
-      return el('div', { class: 'comp' },
+      var members = c.members.map(function (member) { return el('li', { text: member.slug + ' ' + member.ratio.toFixed(2) + 'x' }); });
+      return el('div', { class: c.used ? 'comp' : 'comp unused' },
         el('b', { text: c.median_ratio.toFixed(2) + 'x' }),
-        el('span', { text: c.category + ' - median of ' + c.count + ' live tokens' })
+        el('span', { text: c.category + ' - median of ' + c.count + ' live token' + (c.count === 1 ? '' : 's') + (c.used ? '' : ' - too few, its rows use the global median') }),
+        el('span', { text: 'IQR ' + c.q1_ratio.toFixed(2) + 'x-' + c.q3_ratio.toFixed(2) + 'x - leave-one-out ' + c.loo_low_ratio.toFixed(2) + 'x-' + c.loo_high_ratio.toFixed(2) + 'x' }),
+        el('details', null,
+          el('summary', { text: 'Comparables (' + c.count + ')' }),
+          el('ul', { class: 'members' }, members)
+        )
       );
     });
     return el('section', { class: 'panel model' },
@@ -339,6 +346,8 @@
         'implied = round( tvl_usd x comp x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') )'
       ),
       el('p', { class: 'sub', text: 'Comp is the category median mcap/TVL of the live-token protocols in the snapshot (at least ' + m.min_comps + ' comparables, clamped to ' + m.comp_floor + 'x-' + m.comp_cap + 'x); a category with too few live tokens uses the all-category median of ' + DATA.overall_ratio.toFixed(2) + 'x. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days.' }),
+      el('p', { class: 'sub', text: 'change_7d is the 7-day change in TVL, not a price: a pre-token protocol has no price. The momentum multiplier is bounded to 0.70x-1.60x, and dropping it moves the top 20 by at most 2 ranks - it breaks ties, it does not rank. Each row shows its own waterfall (base, after momentum, final) in its detail view.' }),
+      el('p', { class: 'sub', text: 'Coverage: the multiples come from ' + DATA.comp_pool_size + ' live-token protocols with a usable mcap/TVL ratio, out of ' + DATA.live_token_count + ' live-token protocols in the snapshot (the rest record no market cap). ' + globalRows + ' of ' + DATA.board_size + ' board rows use the all-category median because their category has fewer than ' + m.min_comps + ' comparables - including the top four, whose own categories hold 1-2. Medians ignore outliers, but a median of 3-4 protocols is fragile: dropping one comparable can move it by half or more, as the leave-one-out range shows. And only tokens live and priced on the snapshot date can be comparables, so the multiples carry survivorship bias.' }),
       el('div', { class: 'comps' }, compCards)
     );
   }
@@ -367,9 +376,11 @@
       el('div', { class: 'equation' },
         el('div', null, el('span', { text: 'TVL' }), el('b', { class: 'num', text: fmtUsd(row.tvl_usd) })),
         el('div', null, el('span', { text: 'Comparables multiple (' + row.comp_category + ')' }), el('b', { class: 'num', text: row.comp_ratio.toFixed(2) + 'x' })),
-        el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
+        el('div', null, el('span', { text: 'Base implied (TVL x comp)' }), el('b', { class: 'num', text: fmtUsd(row.base_implied_usd) })),
+        el('div', null, el('span', { text: 'Seven-day TVL growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
+        el('div', null, el('span', { text: 'After momentum (base x growth)' }), el('b', { class: 'num', text: fmtUsd(row.after_momentum_usd) })),
         el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: String(row.maturity_multiplier) })),
         el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
       ),

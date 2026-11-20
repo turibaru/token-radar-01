@@ -15,11 +15,24 @@
 //   maturity = 0.6 + min(age_days, 1095) / 1095 x 0.4   (age_days unknown: 365)
 //   implied  = max(1, round(base x growthMx x maturity))
 //
-// The point of the comparables step: a lending protocol's token is worth a different multiple of
-// TVL than a DEX's or an RWA protocol's, and the snapshot itself says what those multiples are,
-// because it carries the live-token protocols' market caps and TVLs. No protocol name is ever
-// special-cased: the same function scores every row, and the dashboard prints the comparables
-// table so a reader can check the multiple behind any row.
+// change_7d is the snapshot's 7-day TVL change (DefiLlama's /protocols field: the change in total
+// value locked, not a token price — a pre-token protocol has no price to change). The momentum
+// factor is therefore TVL momentum, not price momentum: it rewards a protocol for growing its
+// locked value, and it is bounded — the clamp plus the 0.5 weight put growthMx in [0.7, 1.6], so
+// no row is ever more than 1.6x its base on momentum, and the snapshot's largest 7-day TVL jump
+// (+4,448%) is capped to that 1.6x. Ablation (STATUS.md): dropping momentum moves the top 20 by
+// at most 2 ranks (Spearman 0.9957), so momentum is a tie-breaker, not the ranker; the
+// comparables are (dropping per-category comps moves the top 20 by up to 40 ranks).
+//
+// Every row carries its factor waterfall (base -> after momentum -> final) so a reader can see
+// what each multiplier contributed, and every category's comparables carry N, the interquartile
+// range, the leave-one-out median range, and the member list, so a reader can check the multiple
+// behind any row. Two limits are disclosed, not hidden: 102 of 198 rows fall back to the
+// all-category median (their category has fewer than 3 live-token comparables), and the comp pool
+// is only 128 of the snapshot's 416 live-token protocols (272 record no market cap), so the
+// medians describe the tokens live and priced on the snapshot date — survivorship bias is inherent
+// to a sealed snapshot, and the small-N categories (N = 3-4) are fragile: their leave-one-out
+// median can move by 50% or more (Indexes: 649% — see STATUS.md).
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -72,7 +85,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2-comps';
+export const MODEL_VERSION = 'radar-3-waterfall';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -108,6 +121,13 @@ export interface BoardRow {
     growth_multiplier: number;
     maturity_multiplier: number;
     age_days: number | null;
+    /** The factor waterfall: TVL x comp, then after the momentum multiplier, then the final
+     *  implied value (after maturity). The stored multipliers are rounded to 4 decimals for
+     *  display, so base x growth_multiplier reproduces after_momentum_usd only to within that
+     *  rounding (up to ~$30k on the largest rows); the exact recomputation uses the unrounded
+     *  multipliers, as the dashboard's impliedOf does — and it lands on implied_value_usd exactly. */
+    base_implied_usd: number;
+    after_momentum_usd: number;
   };
   farm_steps: string[];
 }
@@ -129,6 +149,9 @@ export interface RadarRow {
   comp_category: string;
   growth_multiplier: number;
   maturity_multiplier: number;
+  /** The factor waterfall, as in BoardRow.model: base implied, then after momentum. */
+  base_implied_usd: number;
+  after_momentum_usd: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -142,11 +165,23 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
-/** One comparables row: the category, its median mcap/TVL, and how many live protocols back it. */
+/** One comparables row: the category, its median mcap/TVL, how many live protocols back it, the
+ *  spread of those protocols' ratios, and the members themselves — so a reader can check the
+ *  multiple instead of taking it on trust. `used` is false for a category with fewer than
+ *  min_comps live protocols: its rows fall back to the all-category median, and the table says so
+ *  instead of silently printing a median nobody used. median_ratio is the clamped multiple for a
+ *  used category; for an unused one it is the raw median, shown for inspection only. */
 export interface CompRow {
   category: string;
   median_ratio: number;
   count: number;
+  used: boolean;
+  q1_ratio: number;
+  q3_ratio: number;
+  /** The range of the median when any single comparable is dropped (clamped like the median). */
+  loo_low_ratio: number;
+  loo_high_ratio: number;
+  members: { slug: string; ratio: number }[];
 }
 
 /** Everything the dashboard needs: the board, the live set, the comparables, and the model it runs. */
@@ -162,6 +197,12 @@ export interface RadarData {
   live_size: number;
   comps: CompRow[];
   overall_ratio: number;
+  overall_q1_ratio: number;
+  overall_q3_ratio: number;
+  /** Live-token protocols in the snapshot (416) vs the ones with a usable mcap/TVL ratio (128):
+   *  the gap is the coverage limit the dashboard discloses. */
+  comp_pool_size: number;
+  live_token_count: number;
   rows: RadarRow[];
   live: LiveRow[];
 }
@@ -223,51 +264,104 @@ export function isRankable(p: SnapshotProtocol): boolean {
   );
 }
 
-/** The comparables: per-category median mcap/TVL of live-token protocols, plus the all-category median. */
-export function buildComps(snapshot: Snapshot, model: ModelConstants): { byCategory: Map<string, { ratio: number; count: number }>; overall: number } {
-  const byCat = new Map<string, number[]>();
+/** A quartile of a sorted list, by linear interpolation (the same rule the dashboard's text
+ *  quotes); the median of a one-element list is that element. */
+function quartile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const i = (sorted.length - 1) * p;
+  const lo = Math.floor(i);
+  const hi = Math.min(lo + 1, sorted.length - 1);
+  return sorted[lo]! * (1 - (i - lo)) + sorted[hi]! * (i - lo);
+}
+
+/** One category's comparables, with the spread a reader needs to judge the median: the
+ *  interquartile range and the range of the median when any single comparable is dropped. A
+ *  symmetric trim of the list cannot change its median (it keeps the middle element(s)), so no
+ *  trimmed median is offered: it would be the same number under another name. */
+export interface CategoryComps {
+  ratio: number;
+  count: number;
+  q1: number;
+  q3: number;
+  looLow: number;
+  looHigh: number;
+  members: { slug: string; ratio: number }[];
+}
+
+/** The comparables: per-category median mcap/TVL of live-token protocols, plus the all-category median.
+ *  Only live-token protocols can be comparables — a pre-token protocol has no market cap — so no
+ *  board row can ever be its own comparable: buildBoard ranks pre-token protocols only, and this
+ *  function skips every pre-token protocol. Self-inclusion is impossible by construction, not by
+ *  a filter that could drift. `byCategory` holds every category with live ratios, used or not;
+ *  a category is usable as a multiple only when it has at least min_comps members. */
+export function buildComps(snapshot: Snapshot, model: ModelConstants): {
+  byCategory: Map<string, CategoryComps>;
+  overall: number;
+  overallQ1: number;
+  overallQ3: number;
+  poolSize: number;
+  liveCount: number;
+} {
+  const byCat = new Map<string, { slug: string; ratio: number }[]>();
   const all: number[] = [];
+  let liveCount = 0;
   for (const p of snapshot.protocols) {
-    if (isPreToken(p) || p.mcap_usd === null || p.tvl_usd <= 0) continue;
+    if (isPreToken(p)) continue;
+    liveCount++;
+    if (p.mcap_usd === null || p.tvl_usd <= 0) continue;
     const ratio = p.mcap_usd / p.tvl_usd;
     if (!Number.isFinite(ratio) || ratio <= 0) continue;
     all.push(ratio);
     const key = p.category ?? 'Other';
     const list = byCat.get(key) ?? [];
-    list.push(ratio);
+    list.push({ slug: p.slug, ratio });
     byCat.set(key, list);
   }
+  const allSorted = [...all].sort((a, b) => a - b);
   const overall = clamp(median(all, 0.25), model.comp_floor, model.comp_cap);
-  const byCategory = new Map<string, { ratio: number; count: number }>();
+  const byCategory = new Map<string, CategoryComps>();
   for (const [cat, list] of byCat) {
-    if (list.length < model.min_comps) continue;
-    byCategory.set(cat, { ratio: clamp(median(list, overall), model.comp_floor, model.comp_cap), count: list.length });
+    const ratios = list.map((m) => m.ratio).sort((a, b) => a - b);
+    const loos = ratios.map((_, i) => clamp(median(ratios.filter((__, j) => j !== i), overall), model.comp_floor, model.comp_cap));
+    byCategory.set(cat, {
+      // A used multiple is clamped to [comp_floor, comp_cap]; an unused category's median is
+      // shown raw (never applied to any row), so the table never prints a clamped number nobody used.
+      ratio: list.length >= model.min_comps ? clamp(median(ratios, overall), model.comp_floor, model.comp_cap) : round4(median(ratios, overall)),
+      count: list.length,
+      q1: round4(quartile(ratios, 0.25)),
+      q3: round4(quartile(ratios, 0.75)),
+      looLow: round4(Math.min(...loos)),
+      looHigh: round4(Math.max(...loos)),
+      members: [...list].sort((a, b) => a.ratio - b.ratio).map((m) => ({ slug: m.slug, ratio: round4(m.ratio) })),
+    });
   }
-  return { byCategory, overall };
+  return { byCategory, overall, overallQ1: round4(quartile(allSorted, 0.25)), overallQ3: round4(quartile(allSorted, 0.75)), poolSize: all.length, liveCount };
 }
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-/** The comparables multiple one protocol gets: its category's median, else the all-category median. */
-export function compFor(p: SnapshotProtocol, comps: { byCategory: Map<string, { ratio: number; count: number }>; overall: number }): { ratio: number; category: string; count: number } {
+/** The comparables multiple one protocol gets: its category's median when the category has at
+ *  least min_comps live protocols, else the all-category median. */
+export function compFor(p: SnapshotProtocol, comps: { byCategory: Map<string, CategoryComps>; overall: number }, minComps: number): { ratio: number; category: string; count: number } {
   const hit = comps.byCategory.get(p.category ?? 'Other');
-  if (hit !== undefined) return { ratio: hit.ratio, category: p.category ?? 'Other', count: hit.count };
+  if (hit !== undefined && hit.count >= minComps) return { ratio: hit.ratio, category: p.category ?? 'Other', count: hit.count };
   return { ratio: comps.overall, category: 'all categories', count: 0 };
 }
 
-/** The three multipliers and the implied value one protocol gets under `model`. */
+/** The three multipliers and the implied value one protocol gets under `model`, with the factor
+ *  waterfall: base (TVL x comp), after momentum, and the final implied value (after maturity). */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
   model: ModelConstants,
-  comps: { byCategory: Map<string, { ratio: number; count: number }>; overall: number },
-): { implied: number; compRatio: number; compCategory: string; compCount: number; growthPct: number; growthMult: number; maturityMult: number; age: number | null } {
+  comps: { byCategory: Map<string, CategoryComps>; overall: number },
+): { implied: number; base: number; afterMomentum: number; compRatio: number; compCategory: string; compCount: number; growthPct: number; growthMult: number; maturityMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   // The ratio is rounded to 4 decimals here, so the dashboard's recomputation of a row from
   // data.js (which carries the rounded ratio) lands on exactly the board's number.
-  const { ratio: rawRatio, category, count } = compFor(protocol, comps);
+  const { ratio: rawRatio, category, count } = compFor(protocol, comps, model.min_comps);
   const ratio = round4(rawRatio);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = clamp(rawGrowth, model.growth_floor, model.growth_cap);
@@ -275,8 +369,9 @@ export function impliedValue(
   const ageForModel = age ?? model.unknown_age_days;
   const maturityMult = model.maturity_floor + (clamp(ageForModel, 0, model.maturity_days) / model.maturity_days) * model.maturity_range;
   const base = protocol.tvl_usd * ratio;
-  const implied = Math.max(1, Math.round(base * growthMult * maturityMult));
-  return { implied, compRatio: ratio, compCategory: category, compCount: count, growthPct, growthMult, maturityMult, age };
+  const afterMomentum = base * growthMult;
+  const implied = Math.max(1, Math.round(afterMomentum * maturityMult));
+  return { implied, base: Math.max(1, Math.round(base)), afterMomentum: Math.max(1, Math.round(afterMomentum)), compRatio: ratio, compCategory: category, compCount: count, growthPct, growthMult, maturityMult, age };
 }
 
 /** The snapshot's protocol by slug. */
@@ -329,6 +424,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       growth_multiplier: round4(s.growthMult),
       maturity_multiplier: round4(s.maturityMult),
       age_days: s.age,
+      base_implied_usd: s.base,
+      after_momentum_usd: s.afterMomentum,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
   }));
@@ -551,6 +648,8 @@ export function radarRow(row: BoardRow): RadarRow {
     comp_category: row.model.comp_category,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
+    base_implied_usd: row.model.base_implied_usd,
+    after_momentum_usd: row.model.after_momentum_usd,
   };
 }
 
@@ -561,7 +660,17 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const comps = buildComps(snapshot, model);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const compRows: CompRow[] = [...comps.byCategory.entries()]
-    .map(([category, v]) => ({ category, median_ratio: v.ratio, count: v.count }))
+    .map(([category, v]) => ({
+      category,
+      median_ratio: v.ratio,
+      count: v.count,
+      used: v.count >= model.min_comps,
+      q1_ratio: v.q1,
+      q3_ratio: v.q3,
+      loo_low_ratio: v.looLow,
+      loo_high_ratio: v.looHigh,
+      members: v.members,
+    }))
     .sort((a, b) => b.median_ratio - a.median_ratio);
   const radar: RadarData = {
     as_of: snapshot.as_of,
@@ -575,6 +684,10 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     live_size: live.length,
     comps: compRows,
     overall_ratio: comps.overall,
+    overall_q1_ratio: comps.overallQ1,
+    overall_q3_ratio: comps.overallQ3,
+    comp_pool_size: comps.poolSize,
+    live_token_count: comps.liveCount,
     rows: board.map(radarRow),
     live,
   };
@@ -625,7 +738,7 @@ export function parseSnapshot(text: string): Snapshot {
 }
 
 /** Cross-field invariants parseSnapshot's per-field checks do not catch: duplicate slugs, negative
- *  money figures, a change_7d outside what a price move can be, and watchlist slugs with no protocol
+ *  money figures, a change_7d outside what a 7-day TVL move can be, and watchlist slugs with no protocol
  *  behind them. A sealed snapshot that fails one of these is corrupt or from another schema, and the
  *  board it would produce is not a valuation. Returns the first problem, or null. */
 export function validateSnapshot(snapshot: Snapshot): string | null {
@@ -638,10 +751,12 @@ export function validateSnapshot(snapshot: Snapshot): string | null {
     if (p.slug.trim() === '' || p.name.trim() === '') return `snapshot.json's protocol ${i} has an empty slug or name`;
     if (p.tvl_usd < 0) return `${p.slug} has a negative TVL $${p.tvl_usd}`;
     // The source data reports an unlisted market cap as -1 (autofinance in the sealed snapshot):
-    // a sentinel, not a real value, so only a market cap below -1 is corrupt.
+    // a sentinel, not a real value, so only a market cap below -1 is corrupt. (Note: -1 is not
+    // null, so autofinance counts as live-token, never as a board row and never as a comparable —
+    // its ratio would be negative and buildComps drops it.)
     if (p.mcap_usd !== null && p.mcap_usd < -1) return `${p.slug} has a market cap $${p.mcap_usd}, below the -1 sentinel`;
     if (p.change_7d !== null && (p.change_7d < -100 || p.change_7d > 10000)) {
-      return `${p.slug} has a 7-day change of ${p.change_7d}%, outside [-100, 10000]`;
+      return `${p.slug} has a 7-day TVL change of ${p.change_7d}%, outside [-100, 10000]`;
     }
     if (p.listed_at !== null && !/^\d{4}-\d{2}-\d{2}$/.test(p.listed_at)) {
       return `${p.slug} has a listed_at of ${p.listed_at}, not a YYYY-MM-DD date`;

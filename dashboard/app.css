@@ -118,6 +118,10 @@ tbody tr[data-selected="true"] { background: rgba(47, 212, 140, 0.1); }
 .comp { border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--step-2) var(--step-3); display: grid; gap: 2px; }
 .comp b { font-family: var(--font-num); font-size: 14px; color: var(--accent); }
 .comp span { color: var(--muted); font-size: 12px; }
+.comp.unused b { color: var(--gold); }
+.comp details { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.comp summary { cursor: pointer; }
+.comp .members { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 1px; font-family: var(--font-num); font-size: 11px; }
 .empty { padding: var(--step-7) var(--step-5); text-align: center; display: grid; gap: var(--step-3); justify-items: center; }
 .empty p { color: var(--muted); }
 .button { min-height: 36px; padding: 0 var(--step-4); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-2); }

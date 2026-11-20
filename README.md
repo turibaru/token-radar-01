@@ -19,7 +19,7 @@ Node 22+ (standard library only, no install). `main.ts` reads the snapshot, writ
 `out/board.json`, `out/data.js`, copies `dashboard/` and `screenshots/` to `out/`,
 and writes `out/dossier.json` with `buildDossier` from `vendor/makefun-board.ts`.
 
-## The model (radar-2-comps)
+## The model (radar-3-waterfall)
 
 Implied value is a comparables model, computed only from the snapshot's own figures:
 
@@ -33,9 +33,23 @@ implied = round( tvl_usd x comp x (1 + clamp(change_7d, -60, 120) / 100 x 0.5)
   few live tokens uses the all-category median (0.21x on this snapshot). A lending
   token is worth a different multiple of TVL than a DEX's or an RWA protocol's,
   and the snapshot itself says what those multiples are.
-- **growth** — the protocol's 7-day TVL change, clamped, half-weighted.
+- **growth** — the protocol's 7-day TVL change (DefiLlama's `change_7d`: a change
+  in locked value, not a token price — a pre-token protocol has no price), clamped,
+  half-weighted. The momentum multiplier is bounded to 0.70x–1.60x, and ablation
+  shows dropping it moves the top 20 by at most 2 ranks: it breaks ties, it does
+  not rank.
 - **maturity** — how long it has run with no token (age since first listed, 0.6–1.0
   over 3 years; unknown age uses 365 days).
+
+Every row carries its factor waterfall (`base_implied_usd` → `after_momentum_usd` →
+final implied value), and the dashboard's comparables table lists every category with
+its median, N, interquartile range, leave-one-out median range, and the member
+protocols behind the median — including the 20 categories too small to use, whose rows
+fall back to the global median. Two limits are disclosed in the dashboard, not hidden:
+102 of 198 rows use the global median (their category has fewer than 3 comparables),
+and the comp pool is only 128 of the snapshot's 416 live-token protocols (272 record
+no market cap), so the multiples carry survivorship bias. See `STATUS.md` for the
+ablation numbers.
 
 No protocol name is special-cased. The board ranks the whole rankable universe:
 the 40 watchlist protocols plus 158 pre-token protocols below the $50M floor —
