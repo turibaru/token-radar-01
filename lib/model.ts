@@ -549,6 +549,41 @@ export function parseSnapshot(text: string): Snapshot {
   };
 }
 
+/** Cross-field invariants parseSnapshot's per-field checks do not catch: duplicate slugs, negative
+ *  money figures, a change_7d outside what a price move can be, and watchlist slugs with no protocol
+ *  behind them. A sealed snapshot that fails one of these is corrupt or from another schema, and the
+ *  board it would produce is not a valuation. Returns the first problem, or null. */
+export function validateSnapshot(snapshot: Snapshot): string | null {
+  if (snapshot.protocols.length === 0) return 'snapshot.json holds no protocols';
+  const slugs = new Set<string>();
+  for (let i = 0; i < snapshot.protocols.length; i++) {
+    const p = snapshot.protocols[i]!;
+    if (slugs.has(p.slug)) return `snapshot.json repeats the slug ${p.slug} (protocol ${i})`;
+    slugs.add(p.slug);
+    if (p.slug.trim() === '' || p.name.trim() === '') return `snapshot.json's protocol ${i} has an empty slug or name`;
+    if (p.tvl_usd < 0) return `${p.slug} has a negative TVL $${p.tvl_usd}`;
+    // The source data reports an unlisted market cap as -1 (autofinance in the sealed snapshot):
+    // a sentinel, not a real value, so only a market cap below -1 is corrupt.
+    if (p.mcap_usd !== null && p.mcap_usd < -1) return `${p.slug} has a market cap $${p.mcap_usd}, below the -1 sentinel`;
+    if (p.change_7d !== null && (p.change_7d < -100 || p.change_7d > 10000)) {
+      return `${p.slug} has a 7-day change of ${p.change_7d}%, outside [-100, 10000]`;
+    }
+    if (p.listed_at !== null && !/^\d{4}-\d{2}-\d{2}$/.test(p.listed_at)) {
+      return `${p.slug} has a listed_at of ${p.listed_at}, not a YYYY-MM-DD date`;
+    }
+    if (p.chains.some((c) => c.trim() === '')) return `${p.slug} names an empty chain`;
+  }
+  const unknown = snapshot.watchlist.filter((s) => !slugs.has(s));
+  if (unknown.length > 0) return `the watchlist names ${unknown.length} slug${unknown.length === 1 ? '' : 's'} with no protocol: ${unknown.slice(0, 5).join(', ')}`;
+  if (snapshot.watchlist.length === 0) return 'snapshot.json holds an empty watchlist';
+  const dupes = new Set<string>();
+  for (const s of snapshot.watchlist) {
+    if (dupes.has(s)) return `the watchlist repeats ${s}`;
+    dupes.add(s);
+  }
+  return null;
+}
+
 /** Why a board is not one the gate will take, or null: coverage, ranks, order, one shared implied value, and farm steps. */
 export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
   const slugs = new Set(board.map((r) => r.slug));
