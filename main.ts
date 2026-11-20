@@ -100,6 +100,15 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+// Refuse a build whose own outputs are missing or empty: a silent short write is worse than a loud one.
+for (const name of ['board.json', 'data.js', 'dossier.json']) {
+  const path = join(out, name);
+  if (!existsSync(path) || statSync(path).size === 0) {
+    process.stderr.write(`token radar: ${name} is missing or empty in ${out}\n`);
+    process.exit(1);
+  }
+}
+
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
