@@ -365,35 +365,110 @@ function holdDaysFor(age: number | null): number {
   return 30;
 }
 
+/** One category rule: the keywords that select it, the farm action it writes, and the weekly action. */
+interface CategoryRule {
+  /** Substrings of the lowercased category that select this rule, in priority order. */
+  keywords: string[];
+  /** Substrings that select this rule for the weekly action; when absent, `keywords` is used. */
+  weeklyKeywords?: string[];
+  /** The farm action, given the protocol name, the capital and the chain. */
+  action: (name: string, capital: number, chain: string) => string;
+  /** The weekly qualifying action, in one short phrase. */
+  weekly: string;
+}
+
+/**
+ * The category rules, one table for both the farm action and the weekly action, so the two never
+ * drift apart: a category's action and its weekly action are the same rule's two faces. The first
+ * rule whose keyword appears in the lowercased category wins; a protocol whose category matches
+ * nothing falls through to the generic deposit rule at the end.
+ */
+const CATEGORY_RULES: CategoryRule[] = [
+  {
+    keywords: ['lend', 'cdp', 'collateral'],
+    action: (name, capital, chain) => `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.`,
+    weekly: 'a borrow, a repay or a fresh supply',
+  },
+  {
+    keywords: ['dex', 'yield', 'leveraged farm'],
+    // The weekly action never named leveraged farming: a leveraged farm's week is the generic one.
+    weeklyKeywords: ['dex', 'yield'],
+    action: (name, capital, chain) => `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`,
+    weekly: 'a swap, a fresh liquidity add or a fee claim',
+  },
+  {
+    keywords: ['bridge'],
+    action: (name, capital, chain) => `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.`,
+    weekly: 'a deposit, a borrow, a swap or a vote',
+  },
+  {
+    keywords: ['staking', 'restak'],
+    action: (name, capital, chain) => `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.`,
+    weekly: 'a deposit, a borrow, a swap or a vote',
+  },
+  {
+    keywords: ['perpetual', 'derivative'],
+    action: (name, capital, chain) => `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.`,
+    weekly: 'a small trade or a funding-fee settlement',
+  },
+  {
+    keywords: ['prediction'],
+    action: (name, capital, chain) => `Fund $${capital} and place one market position on ${name}.`,
+    weekly: 'a new market position or a settlement claim',
+  },
+  {
+    keywords: ['curator', 'allocator'],
+    action: (name, capital, chain) => `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.`,
+    weekly: 'a fresh vault deposit or a rebalance vote',
+  },
+  {
+    keywords: ['stable'],
+    action: (name, capital, chain) => `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.`,
+    weekly: 'a mint, a redemption or a peg check',
+  },
+  {
+    keywords: ['rwa'],
+    action: (name, capital, chain) => `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.`,
+    weekly: 'a mint, a redemption or a yield claim',
+  },
+  {
+    keywords: ['insurance'],
+    action: (name, capital, chain) => `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.`,
+    weekly: 'a deposit, a borrow, a swap or a vote',
+  },
+  {
+    keywords: ['basis'],
+    action: (name, capital, chain) => `Deposit $${capital} of USDC into ${name}'s basis vault on ${chain} and hold the position.`,
+    weekly: 'a deposit, a borrow, a swap or a vote',
+  },
+  {
+    keywords: ['farm'],
+    action: (name, capital, chain) => `Deposit $${capital} into ${name}'s farm on ${chain} and keep the position open.`,
+    weekly: 'a deposit, a borrow, a swap or a vote',
+  },
+];
+
+/** The first rule whose keyword appears in the lowercased category, or null. */
+function ruleFor(category: string | null, weekly = false): CategoryRule | null {
+  const c = (category ?? '').toLowerCase();
+  for (const rule of CATEGORY_RULES) {
+    const keys = weekly ? (rule.weeklyKeywords ?? rule.keywords) : rule.keywords;
+    if (keys.some((k) => c.includes(k))) return rule;
+  }
+  return null;
+}
+
 /** The category's one action, in the words a farmer can follow. */
 function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
-  const c = (p.category ?? '').toLowerCase();
-  const name = p.name;
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.`;
-  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`;
-  if (c.includes('bridge')) return `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.`;
-  if (c.includes('staking') || c.includes('restak')) return `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.`;
-  if (c.includes('perpetual') || c.includes('derivative')) return `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.`;
-  if (c.includes('prediction')) return `Fund $${capital} and place one market position on ${name}.`;
-  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.`;
-  if (c.includes('stable')) return `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.`;
-  if (c.includes('rwa')) return `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.`;
-  if (c.includes('insurance')) return `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.`;
-  if (c.includes('basis')) return `Deposit $${capital} of USDC into ${name}'s basis vault on ${chain} and hold the position.`;
-  if (c.includes('farm')) return `Deposit $${capital} into ${name}'s farm on ${chain} and keep the position open.`;
-  return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
+  const rule = ruleFor(p.category);
+  if (rule !== null) return rule.action(p.name, capital, chain);
+  return `Deposit $${capital} of USDC into ${p.name} on ${chain} and keep the position open.`;
 }
 
 /** A second, category-specific qualifying action, so the weekly step is concrete, not a slogan. */
 function weeklyActionFor(p: SnapshotProtocol): string {
-  const c = (p.category ?? '').toLowerCase();
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return 'a borrow, a repay or a fresh supply';
-  if (c.includes('dex') || c.includes('yield')) return 'a swap, a fresh liquidity add or a fee claim';
-  if (c.includes('perpetual') || c.includes('derivative')) return 'a small trade or a funding-fee settlement';
-  if (c.includes('curator') || c.includes('allocator')) return 'a fresh vault deposit or a rebalance vote';
-  if (c.includes('prediction')) return 'a new market position or a settlement claim';
-  if (c.includes('rwa')) return 'a mint, a redemption or a yield claim';
-  if (c.includes('stable')) return 'a mint, a redemption or a peg check';
+  const rule = ruleFor(p.category, true);
+  if (rule !== null) return rule.weekly;
   return 'a deposit, a borrow, a swap or a vote';
 }
 
