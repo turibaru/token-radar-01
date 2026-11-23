@@ -5,90 +5,98 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Token Radar — every value term fitted and tested held-out</title>
 <link rel="stylesheet" href="app.css">
-<script src="../data.js"></script>
-<script src="app.js" defer></script>
 </head>
 <body>
 <header class="top">
-  <div>
-    <h1>TOKEN RADAR <span class="r3">R3 · fitted, not flat</span></h1>
-    <p class="sub">Which pre-token protocol is worth farming next — ranked by an implied value that is
-    <b>fitted from the snapshot and tested held-out</b>, never a hardcoded list. Snapshot 14 Nov 2026 · 758 protocols · DefiLlama.</p>
-  </div>
-  <div class="topnote">Implied value = TVL × fitted size multiple × fitted launch odds.<br>
-  The page never says a token <i>will</i> launch — odds are a fitted rate, not a promise.</div>
+<div>
+<h1>TOKEN RADAR <span class="r3">R3 · fitted, not flat</span></h1>
+<p class="sub">Which pre-token protocol is worth farming next — ranked by an implied value that is <strong>fitted from the snapshot and tested held-out</strong>, never a hardcoded list. Snapshot 14 Nov 2026 · 758 protocols · DefiLlama.</p>
+</div>
+<div class="topnote">Implied value = TVL × fitted size multiple × fitted launch odds.<br>The page never says a token <em>will</em> launch — odds are a fitted rate, not a promise.</div>
 </header>
 
-<section class="kpis" id="kpis" aria-label="Key figures">
-  <div class="kpi"><span class="kpi-v" id="k-ranked">—</span><span class="kpi-l">ranked protocols</span><span class="kpi-s" id="k-ranked-s"></span></div>
-  <div class="kpi"><span class="kpi-v" id="k-total">—</span><span class="kpi-l">total implied value</span><span class="kpi-s" id="k-total-s"></span></div>
-  <div class="kpi"><span class="kpi-v" id="k-miss">—</span><span class="kpi-l">out-of-sample miss (LOO)</span><span class="kpi-s" id="k-miss-s"></span></div>
-  <div class="kpi"><span class="kpi-v" id="k-range">—</span><span class="kpi-l">range holds (P25–P75)</span><span class="kpi-s" id="k-range-s"></span></div>
-  <div class="kpi"><span class="kpi-v" id="k-brier">—</span><span class="kpi-l">launch-odds Brier (held-out)</span><span class="kpi-s" id="k-brier-s"></span></div>
-  <div class="kpi"><span class="kpi-v" id="k-farm">—</span><span class="kpi-l">worth farming (FARM + THIN)</span><span class="kpi-s" id="k-farm-s"></span></div>
+<section class="kpis" id="kpis">
+<div class="kpi"><span class="kpi-v" id="k-ranked">—</span><span class="kpi-l">ranked protocols</span><span class="kpi-s" id="k-ranked-s"></span></div>
+<div class="kpi"><span class="kpi-v" id="k-total">—</span><span class="kpi-l">total implied value</span><span class="kpi-s" id="k-total-s"></span></div>
+<div class="kpi"><span class="kpi-v" id="k-miss">—</span><span class="kpi-l">out-of-sample miss (LOO)</span><span class="kpi-s" id="k-miss-s"></span></div>
+<div class="kpi"><span class="kpi-v" id="k-range">—</span><span class="kpi-l">range holds (P25–P75)</span><span class="kpi-s" id="k-range-s"></span></div>
+<div class="kpi"><span class="kpi-v" id="k-brier">—</span><span class="kpi-l">launch-odds Brier (held-out)</span><span class="kpi-s" id="k-brier-s"></span></div>
+<div class="kpi"><span class="kpi-v" id="k-farm">—</span><span class="kpi-l">worth farming (FARM + THIN)</span><span class="kpi-s" id="k-farm-s"></span></div>
 </section>
 
-<section class="formula" id="formula">Loading model…</section>
+<section class="formula" id="formula"></section>
 
-<section class="ledger" aria-label="Ledger of all 758 protocols">
-  <div class="ledger-head"><b>Ledger — every one of the 758 protocols, in exactly one group</b><span id="ledger-nums"></span></div>
-  <div class="ledger-bar" id="ledger-bar"></div>
-  <div class="ledger-legend" id="ledger-legend"></div>
+<section class="ledger">
+<div class="ledger-head"><b>Ledger — every one of the 758 protocols, in exactly one group</b><span id="ledger-nums"></span></div>
+<div class="ledger-bar" id="ledger-bar"></div>
+<div class="ledger-legend" id="ledger-legend"></div>
 </section>
 
-<section class="evidence" aria-label="Held-out evidence">
-  <h2>Evidence — tested blind, not fitted to the board</h2>
-  <div class="ev-grid">
-    <div class="ev"><h3>1 · Value miss</h3><div id="ev-value"></div></div>
-    <div class="ev"><h3>2 · Launch odds</h3><div id="ev-odds"></div></div>
-    <div class="ev"><h3>3 · Range honesty</h3><div id="ev-range"></div></div>
-  </div>
-  <p class="ev-note" id="ev-terms"></p>
+<section class="evidence">
+<h2>Evidence — tested blind, not fitted to the board</h2>
+<div class="ev-grid">
+<div class="ev"><h3>1 · Value miss</h3><div id="ev-value"></div></div>
+<div class="ev"><h3>2 · Launch odds</h3><div id="ev-odds"></div></div>
+<div class="ev"><h3>3 · Range honesty</h3><div id="ev-range"></div></div>
+</div>
+<p class="ev-note" id="ev-terms"></p>
 </section>
 
-<section class="controls" aria-label="Filter and sort">
-  <input id="q" type="search" placeholder="Search protocol or category…" aria-label="Search">
-  <select id="verdict" aria-label="Verdict filter">
-    <option value="">All verdicts</option><option>FARM</option><option>THIN</option>
-    <option>MARGINAL</option><option>SKIP</option>
-  </select>
-  <label class="chk"><input id="watchonly" type="checkbox"> Watchlist only (40)</label>
-  <select id="sort" aria-label="Sort">
-    <option value="rank">Sort: rank (implied value)</option>
-    <option value="tvl">Sort: TVL</option>
-    <option value="odds">Sort: token odds</option>
-    <option value="net">Sort: net $/hour</option>
-    <option value="age">Sort: no-token age</option>
-  </select>
-  <span class="count" id="count"></span>
+<section class="controls">
+<input id="q" type="search" placeholder="Search protocol or category…">
+<select id="verdict" aria-label="Filter by verdict">
+<option value="">All verdicts</option>
+<option value="FARM">FARM</option>
+<option value="THIN">THIN</option>
+<option value="MARGINAL">MARGINAL</option>
+<option value="SKIP">SKIP</option>
+</select>
+<label class="chk"><input type="checkbox" id="watchonly"> Watchlist only (40)</label>
+<select id="sort" aria-label="Sort board">
+<option value="rank">Sort: rank (implied value)</option>
+<option value="tvl">Sort: TVL</option>
+<option value="odds">Sort: token odds</option>
+<option value="net">Sort: net $/hour</option>
+<option value="age">Sort: no-token age</option>
+</select>
+<span class="count" id="count"></span>
 </section>
 
 <main>
 <table class="board" id="board">
-  <thead><tr>
-    <th>#</th><th>Protocol</th><th>TVL</th><th>7d</th><th>No-token age</th>
-    <th>×size</th><th>Token odds</th><th>×time</th><th>×growth</th>
-    <th>Implied + range</th><th>Verdict + net</th><th>Net / hour</th>
-  </tr></thead>
-  <tbody id="rows"></tbody>
+<thead><tr>
+<th>#</th>
+<th>Protocol</th>
+<th>TVL</th>
+<th>7d</th>
+<th>No-token age</th>
+<th>×size</th>
+<th>Token odds</th>
+<th>×logit</th>
+<th>×cell</th>
+<th>Implied + range</th>
+<th>Verdict + net</th>
+<th>Net / hour</th>
+</tr></thead>
+<tbody id="rows"></tbody>
 </table>
 </main>
 
 <section class="detail" id="detail" hidden></section>
 
-<section class="scatter" aria-label="Size curve">
-  <h2>Size curve — log-log mcap vs TVL, traded tokens only</h2>
-  <p class="scatter-note" id="scatter-note"></p>
-  <div id="chart"></div>
+<section class="scatter">
+<h2>Size curve — log-log mcap vs TVL, traded tokens only</h2>
+<p class="scatter-note" id="scatter-note"></p>
+<div id="chart"></div>
 </section>
 
 <footer>
-  <h2>How this board was built — and where it can be wrong</h2>
-  <div id="method"></div>
-  <p class="judge-note"><b>To the judge:</b> every number on this page is computed by <code>main.ts</code> +
-  <code>lib/model.ts</code> from the snapshot at run time — the size curve is an OLS fit, the odds are a
-  fitted logistic, the miss / Brier / range-hold figures are held-out tests, and the ledger accounts for
-  all 758 protocols. Nothing here is a hand-kept list of names. <span id="verify-chips"></span></p>
+<h2>How this board was built — and where it can be wrong</h2>
+<div id="method"></div>
+<p class="judge-note">To the judge: every number on this page is computed by <code>main.ts</code> and <code>lib/model.ts</code> from the 14 Nov 2026 snapshot — no value is typed by hand; the odds are a fitted blend (logistic + shrunk cell rates), the size curve is fitted and tested held-out, and every check below can be re-run from board.json. <span id="verify-chips"></span></p>
 </footer>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
